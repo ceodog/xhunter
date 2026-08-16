@@ -1,0 +1,91 @@
+[project]
+name = "planetx-hunter"
+version = "0.1.0"
+description = "Amortized simulation-based inference for a hypothetical Planet X, using REBOUND-simulated Solar Systems and a transformer-based neural posterior estimator over TNO/ETNO populations."
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+license = { text = "MIT" }
+dependencies = [
+    # REBOUND 5.1.0 rewrote WHFast512 in x86 assembly. Its setup.py's
+    # is_x86_64() check hard-codes `return False` for sys.platform=="darwin"
+    # (all Macs), so the assembly object never gets built/linked there --
+    # but the C sources still reference its symbols unconditionally,
+    # producing a broken librebound.so on macOS (symptom: dlopen fails with
+    # "symbol not found in flat namespace" for a whfast512 symbol). Verified
+    # by diffing rebound 5.0.1's setup.py (no assembly step, AVX512 is a
+    # purely opt-in compile flag) against 5.1.x's. This project only ever
+    # uses plain "whfast", never "whfast512", so pinning below the
+    # regression is safe; revisit once upstream fixes the darwin build.
+    "rebound>=4.4,<5.1.0",
+    "numpy>=1.26",
+    "pandas>=2.2",
+    "pyarrow>=16.0",
+    # torch dropped macOS x86_64 (Intel) wheels after 2.2.2 (Jan 2024), and
+    # doesn't ship cp313 wheels until well after that -- pinned <2.3 and
+    # requires-python capped at <3.13 above so `uv sync` resolves to a
+    # combination with actual wheels on Intel Macs. On Apple Silicon/Linux
+    # you can safely relax both once you don't need Intel Mac support.
+    "torch>=2.2,<2.3",
+    "zuko>=1.1",
+    "pyyaml>=6.0",
+    "click>=8.1",
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+# Only needed for the optional 1-PN GR correction (worker.py's
+# _maybe_add_gr, gated behind configs/prior.yaml `use_gr: false` by
+# default). Kept out of the base dependency set because reboundx's C
+# extension build is known to be finicky on some toolchains -- see the
+# notes under [tool.uv] and README.md, "Setup (uv)" -- and the default
+# pipeline never imports it (worker.py imports it lazily, only when
+# use_gr=True).
+gr = ["reboundx>=4.3"]
+
+[project.scripts]
+planetx = "planetx.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/planetx"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.5",
+]
+
+[tool.uv]
+# Recommended by uv's own resolver error on Intel Mac: forces resolution to
+# consider this platform even though it's no longer torch's primary target,
+# so it correctly lands on torch 2.2.2 instead of the newest (wheel-less) release.
+required-environments = [
+    "sys_platform == 'darwin' and platform_machine == 'x86_64'",
+]
+# The following two settings only take effect if you opt into the `gr`
+# extra (`uv sync --extra gr`); reboundx isn't installed otherwise.
+#
+# reboundx's build step `import rebound`s to locate REBOUND's compiled C
+# library and headers. Under uv's default isolated build, that import
+# resolves a *separately* built rebound copy in a throwaway build env,
+# which can be ABI-mismatched against the rebound actually installed in
+# this project's venv (symptom: "symbol not found in flat namespace" at
+# import time). Building reboundx against the shared project env instead
+# guarantees it links against the exact same rebound build.
+no-build-isolation-package = ["reboundx"]
+
+# With build isolation off, reboundx's build step runs in the shared
+# project env, which doesn't otherwise contain setuptools -- reboundx's own
+# build-system.requires doesn't declare it, so it must be supplied here.
+[tool.uv.extra-build-dependencies]
+reboundx = ["setuptools"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src"]

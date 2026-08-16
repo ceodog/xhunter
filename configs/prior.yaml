@@ -1,0 +1,69 @@
+# Prior specification for hypothetical-Planet-X (HPX) simulation-based inference.
+#
+# theta_hpx  -- the inference target: HPX's own orbital elements + mass.
+# nuisance   -- latents that are sampled and marginalized over (never used as
+#               a label), because they are not known precisely enough to fix.
+# fixed      -- physical constants held identical across every simulation
+#               (see planetx.constants.GIANT_PLANETS): known to far higher
+#               precision than would matter for the HPX signal, so they are
+#               NOT sampled and NOT part of theta.
+#
+# See README.md, "Why the giant planet masses aren't nuisance parameters".
+
+theta_hpx:
+  mass:
+    dist: loguniform
+    low: 1.0     # Earth masses
+    high: 15.0
+  a:
+    dist: uniform
+    low: 250.0   # AU
+    high: 800.0
+  e:
+    dist: uniform
+    low: 0.1
+    high: 0.6
+  i:
+    dist: uniform
+    low: 0.0     # deg
+    high: 40.0
+  Omega:
+    dist: uniform
+    low: 0.0     # deg
+    high: 360.0
+  omega:
+    dist: uniform
+    low: 0.0     # deg
+    high: 360.0
+  M:
+    dist: uniform
+    low: 0.0     # deg -- orbital phase, expect a near-flat posterior
+    high: 360.0
+
+nuisance:
+  primordial_disk_mass:
+    dist: loguniform
+    low: 1.0     # Earth masses, total in test-particle-generating disk
+    high: 30.0
+  disk_inner_edge:
+    dist: uniform
+    low: 30.0    # AU
+    high: 45.0
+  disk_outer_edge:
+    dist: uniform
+    low: 50.0    # AU
+    high: 100.0
+  disk_e_scale:
+    dist: uniform
+    low: 0.01
+    high: 0.15
+  disk_i_scale:
+    dist: uniform
+    low: 1.0     # deg
+    high: 10.0
+
+simulation:
+  n_test_particles: 2000
+  integration_years: 4.0e9
+  dt_years: 5.0
+  use_gr: false   # optional 1-PN correction; forces ias15 integrator when true
