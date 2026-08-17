@@ -16,12 +16,22 @@ import rebound
 from planetx.constants import EARTH_MASS_IN_MSUN, GIANT_PLANETS, THETA_KEYS
 
 
-def _add_giant_planets(sim: "rebound.Simulation") -> None:
+def _add_giant_planets(sim: "rebound.Simulation", rng: np.random.Generator) -> None:
+    """a, e, inc, Omega, omega stay fixed at GIANT_PLANETS' verified J2000
+    values -- that's the well-constrained, dynamically important
+    architecture (see README.md, "Fixed constants vs. nuisance parameters
+    vs. theta"). M (orbital phase) is drawn uniformly per giant per
+    simulation instead of using GIANT_PLANETS' J2000 M: t=0 doesn't
+    correspond to a real calendar epoch anyway (see "The primordial disk
+    and dynamical relaxation"), so pinning every simulation to today's
+    specific orbital phase for each giant would be an arbitrary choice with
+    no cost to removing it, rather than a physically meaningful one.
+    """
     for name, el in GIANT_PLANETS.items():
         sim.add(
             m=el["m"], a=el["a"], e=el["e"], inc=np.radians(el["inc"]),
             Omega=np.radians(el["Omega"]), omega=np.radians(el["omega"]),
-            M=np.radians(el["M"]), name=name,
+            M=rng.uniform(0, 2 * np.pi), name=name,
         )
 
 
@@ -95,8 +105,16 @@ def run_one(
     sim = rebound.Simulation()
     sim.units = ("yr", "AU", "Msun")
     sim.add(m=1.0, name="sun")
-    _add_giant_planets(sim)
+    _add_giant_planets(sim, rng)
     _add_hpx(sim, theta)
+    # Every particle added above this line is massive; N_active tells
+    # REBOUND's gravity routine to only compute forces FROM these bodies,
+    # not between the massless test particles added next. Without this,
+    # REBOUND's default "basic" gravity module loops over all N^2 particle
+    # pairs regardless of mass, making the primordial disk's cost scale
+    # quadratically in n_test_particles instead of linearly -- empirically,
+    # ~33x slower at n_test_particles=2000 on this project's benchmark.
+    sim.N_active = len(sim.particles)
     _add_primordial_disk(sim, nuisance, n_test_particles, rng)
 
     sim.move_to_com()

@@ -58,14 +58,53 @@ def _uncertainty_for(V: float) -> dict[str, float]:
     }
 
 
+def _sample_H(rng: np.random.Generator, h_min: float, h_max: float, slope: float) -> float:
+    """Draw an absolute magnitude from a single power-law luminosity function,
+    dN/dH ~ 10^(slope*H), via inverse-CDF sampling -- the standard shape used
+    for debiased KBO/TNO size distributions (many more small/faint objects
+    than large/bright ones), rather than a flat draw across [h_min, h_max].
+
+    slope (often called "alpha" in the literature) is NOT precisely
+    constrained for the ETNO population specifically -- sample sizes are
+    tiny (order 10) and it's degenerate with the (also poorly known)
+    detection efficiency at extreme distances. Commonly-cited debiased KBO
+    slope estimates (~0.7-0.9) are fit over a narrow magnitude range in
+    their source studies; naively applied across this project's much wider
+    (h_min, h_max) span, they blow up (e.g. slope=0.7 over an 11-magnitude
+    range gives a ~5x10^7 density ratio between the faint and bright ends,
+    collapsing essentially every draw to h_max -- verified empirically
+    while tuning this). ~0.1 keeps the same qualitative shape (more faint
+    objects than bright ones) without that extrapolation blowup; treat it
+    as a tunable approximation, not an authoritative literature figure.
+    """
+    u = rng.uniform()
+    lo, hi = 10 ** (slope * h_min), 10 ** (slope * h_max)
+    return float(np.log10(u * (hi - lo) + lo) / slope)
+
+
 @dataclass
 class SimpleSelectionFunction:
-    """Illustrative stand-in for a real survey simulator. See module docstring."""
+    """Illustrative stand-in for a real survey simulator. See module docstring.
+
+    absolute_mag_range default (1.0, 12.0) and luminosity_function_slope are
+    calibrated against real JPL SBDB data for 8 securely-classified ETNOs
+    (a > 150 AU, q > 30 AU): Sedna (H=1.50), 2012 VP113 (4.05), 2000 CR105
+    (6.14), 2015 TG387 (5.57), 2004 VN112 (6.46), 2007 TG422 (6.47),
+    2010 GB174 (6.74), 2013 FT28 (7.20) -- observed range 1.5-7.2. The
+    range here is deliberately wider than that: 1.0 so the brightest known
+    class (Sedna-like) is reachable at all (a flat (4.0, 9.0) range used
+    previously made this structurally impossible), and 12.0 to represent
+    the true underlying population, most of which is too faint to have
+    ever been detected -- using the detected sample's own range as the
+    prior would be circular, since it's already brightness-selected by
+    construction (see README.md/chat history for the full reasoning).
+    """
 
     sky_fraction: float = 0.03
     limiting_mag: float = 24.5
     tracking_efficiency: float = 0.8
-    absolute_mag_range: tuple[float, float] = (4.0, 9.0)
+    absolute_mag_range: tuple[float, float] = (1.0, 12.0)
+    luminosity_function_slope: float = 0.1
 
     def apply(self, tnos: list[dict], rng: np.random.Generator) -> FeatureSet:
         detected = []
@@ -73,7 +112,7 @@ class SimpleSelectionFunction:
             if rng.uniform() > self.sky_fraction:
                 continue
 
-            H = rng.uniform(*self.absolute_mag_range)
+            H = _sample_H(rng, *self.absolute_mag_range, self.luminosity_function_slope)
             M_deg = obj.get("M", rng.uniform(0, 360))
             r = _heliocentric_distance(obj["a"], obj["e"], M_deg)
             delta = max(r - 1.0, 0.1)  # crude geocentric distance near opposition

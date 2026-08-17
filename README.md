@@ -48,6 +48,35 @@ far beyond human observing baselines. So:
   *time points from the same real system* is not possible with real data
   and is not what this pipeline does.
 
+(What "final epoch" actually corresponds to in calendar terms is a separate
+question with a real subtlety — see "The primordial disk and dynamical
+relaxation" under Physical Principles below.)
+
+### Feature parity
+
+The exact same feature-engineering code
+(`planetx.featurelib.build_feature_set`) is called from both the
+simulation pipeline (`planetx.simgen.selection`) and the real-data
+pipeline (`planetx.obsdata.build_x`). This is what prevents train/inference
+skew — if the two sides ever computed features differently, the network's
+posterior on real data would be unreliable regardless of how well training
+converged.
+
+## Physical principles and assumptions
+
+### Osculating orbital elements: the shared representation
+
+Both θ and every row of x are **osculating elements** `(a, e, i, Ω, ω, M)` —
+the parameters of the two-body Keplerian ellipse that matches a body's true
+position and velocity at one instant, even though the real trajectory is
+perturbed (non-Keplerian) by other bodies' gravity. ("Osculating," from
+Latin for "kissing": the ellipse touches and matches the true orbit at
+exactly that instant, then diverges.) This is why simulated and real data
+can share one feature schema: `hpx.orbit(primary=...)` in `worker.py`
+computes osculating elements from a Cartesian N-body state the same way a
+real orbit determination computes them from astrometric observations — the
+same six-parameter description, opposite direction of computation.
+
 ### Fixed constants vs. nuisance parameters vs. θ
 
 Three different roles, easy to conflate:
@@ -56,16 +85,182 @@ Three different roles, easy to conflate:
 |---|---|---|---|
 | θ | yes | no — this is the label | HPX mass, a, e, i, Ω, ω, M |
 | nuisance | yes | yes (never a label) | primordial disk mass/extent, disk excitation |
-| fixed | no — same every run | n/a | known giant planet masses |
+| fixed | no — same every run | n/a | giant planet masses, a, e, inc, Ω, ω |
 
-The giant planets' masses are known to far higher precision (spacecraft
-tracking, DE440/DE441) than would meaningfully affect the HPX signal, so
-they're held fixed (`planetx.constants.GIANT_PLANETS`) rather than sampled
-as a nuisance latent — sampling them would waste model capacity for no
-statistical benefit. Primordial disk properties, by contrast, are
-genuinely uncertain and could confound HPX's effect on the TNO population
-if not marginalized, so they *are* sampled every run and never fed back as
-a label.
+The giant planets' masses and dynamical architecture (`a, e, inc, Ω, ω`)
+are known to far higher precision (spacecraft tracking, DE440/DE441) than
+would meaningfully affect the HPX signal, so they're held fixed
+(`planetx.constants.GIANT_PLANETS`) rather than sampled as a nuisance
+latent — sampling them would waste model capacity for no statistical
+benefit. Primordial disk properties, by contrast, are genuinely uncertain
+and could confound HPX's effect on the TNO population if not marginalized,
+so they *are* sampled every run and never fed back as a label.
+
+One element doesn't fit cleanly into either row: each giant's orbital
+**phase** (`M`) is randomized uniformly per simulation directly in
+`simgen/worker.py`, rather than being fixed at its J2000 value like the
+rest of `GIANT_PLANETS`, or sampled from a configured nuisance prior in
+`prior.yaml`. See "The primordial disk and dynamical relaxation" below for
+why — in short, `t=0` isn't a real calendar epoch, so there's no principled
+reason to prefer today's specific orbital phase for each giant over any
+other, and randomizing it is essentially free (unlike the dynamical
+architecture, which chaos makes genuinely expensive and ill-posed to
+resample — also covered there).
+
+**Provenance note:** `GIANT_PLANETS`' orbital elements (mass ratios aside —
+those are well-known IAU constants) were initially written from general
+recall rather than a live lookup, and turned out to have real errors when
+checked against JPL SSD's actual reference table for this purpose
+([Keplerian Elements for Approximate Positions of the Major
+Planets](https://ssd.jpl.nasa.gov/planets/approx_pos.html), Standish
+1992/2006) — Saturn's eccentricity was off by ~5%, Neptune's by ~24%, plus
+smaller errors elsewhere. They've since been corrected against that table
+(J2000.0 epoch; `constants.py`'s docstring documents the exact convention
+conversion used). If you regenerate this file, don't recall these values
+either — go back to that source, or better, a live JPL Horizons/DE440
+query.
+
+### Why the inner planets aren't modeled at all
+
+`simgen/worker.py` builds each simulation from the Sun, the four giant
+planets, HPX, and the primordial disk -- Mercury, Venus, Earth, and Mars
+never appear. This isn't an oversight: at TNO/ETNO distances (tens to
+hundreds of AU), a distant body can't resolve the inner solar system's
+internal structure -- its effect there is, to extremely high precision,
+indistinguishable from just adding the inner planets' mass to the Sun's.
+And that combined mass (Mercury + Venus + Earth + Mars ≈ 5.9×10⁻⁶ M☉, about
+6 parts per million of the Sun) is roughly 160x smaller than Jupiter alone
+(954.79×10⁻⁶ M☉ in `constants.GIANT_PLANETS`), and is comparable to or
+smaller than the *low end* of HPX's own hypothesized mass range (1 Earth
+mass ≈ 3×10⁻⁶ M☉) -- below the smallest signal this project is trying to
+detect. (Worth noting precisely: the current code doesn't even fold that
+6 ppm into the Sun's mass, i.e. `sim.add(m=1.0, ...)` rather than
+`m=1.0 + 5.9e-6` -- a negligible additional simplification, smaller than
+the uncertainty already carried by the nuisance-parameter priors.)
+
+There's also an independent, purely computational reason to leave them
+out -- see "Numerical integration validity: the timestep floor" below.
+Sun + 4 giant planets (+ a hypothetical distant perturber) is also the
+standard setup in the actual Planet Nine dynamics literature (Batygin &
+Brown, Nesvorný, etc.) for exactly these reasons -- not a shortcut unique
+to this scaffold.
+
+### The primordial disk and dynamical relaxation
+
+`simgen/worker.py`'s `_add_primordial_disk` seeds each simulation with
+massless test particles standing in for the early, dynamically "cold" disk
+of leftover planetesimals from Solar System formation — before
+gravitational scattering by the giant planets (and, in this project's
+hypothesis, HPX) sculpted it into the Kuiper Belt / scattered disk / ETNO
+structure observed today. Integrating this disk forward under N-body
+gravity is what allows realistic resonant/secular structure to develop;
+without that Gyr-scale relaxation, there'd be nothing but the disk's
+arbitrary initial condition to observe.
+
+A nuance worth being precise about: "final epoch" means θ and x are read
+out at the same simulated instant as each other — not that the simulated
+clock literally reconstructs real calendar time. Every simulation's `t=0`
+is seeded with the giant planets' *current* (J2000) elements
+(`constants.GIANT_PLANETS`), so integrating forward by `integration_years`
+does not end at real "now"; it ends `integration_years` in the future. See
+the `SOLAR_SYSTEM_AGE_YEARS` comment in `constants.py` for the full
+reasoning — in short, that duration is chosen as "long enough for
+realistic structure to develop," not as a literal replay of solar system
+history from an accurate primordial giant-planet configuration (which
+would require modeling giant-planet migration itself, e.g. the Nice
+model — beyond this project's scope). What does still hold regardless:
+θ and x share the same final simulated instant, so they remain a valid,
+mutually consistent training pair no matter what that instant means in
+calendar terms.
+
+**Why not just backward-integrate today's elements to find the true `t=0`?**
+REBOUND supports it (Newtonian gravity is time-reversible), but it wouldn't
+recover an accurate primordial configuration, for two independent reasons.
+First, the solar system is chaotic: Laskar (1989) found a ~5 Myr Lyapunov
+time for the full 8-planet system, and Murray & Holman (1999) found
+7–20 Myr for the giant-planet subsystem alone, driven by overlapping
+three-body mean-motion resonances among the giants themselves.
+`integration_years` (4.5 Gyr) is ~300–600 Lyapunov times, so any
+backward-integrated trajectory — even with perfect arithmetic — diverges
+completely from the real historical one long before reaching anywhere near
+a genuinely primordial epoch; you'd get *a* dynamically valid trajectory,
+not *the* real one. Second, and independent of chaos: giant-planet
+migration (the mechanism thought to have produced the compact
+pre-migration configuration in the first place, per the Nice model above)
+is driven by angular-momentum exchange with the primordial disk — so
+backward-integrating the giants *without* the disk removes the actual
+causal driver, and would just relax into bounded oscillation around
+roughly today's configuration rather than reconstructing a genuinely
+different pre-migration state. This is also why the actual Nice-model
+literature (Tsiganis, Gomes, Morbidelli & Levison 2005; Levison et al.
+2011) doesn't try to solve for *the* historical trajectory at all — it
+runs forward ensembles from many plausible primordial setups and checks
+which ones statistically reproduce today's solar system, the same
+simulate-many-hypotheses logic this project already applies to HPX itself,
+just one level deeper.
+
+Given that, `a, e, inc, Ω, ω` for the giants are held fixed at their
+verified J2000 values rather than resampled — chaos makes nearby
+alternatives behave unpredictably rather than smoothly (unlike the disk's
+nuisance parameters), and there's no principled distribution to sample
+from even if that weren't a problem. Each giant's orbital **phase** (`M`)
+is treated differently: since `t=0` isn't a real calendar epoch anyway,
+there's no reason to prefer today's specific phase over any other, so
+`simgen/worker.py`'s `_add_giant_planets` draws it uniformly per
+simulation instead of using `GIANT_PLANETS`' fixed J2000 `M` — free
+robustness to an arbitrary detail, without touching the well-constrained
+dynamical architecture or reopening the chaos problem above.
+
+### How real orbits (and their uncertainty) are actually determined
+
+A single astrometric observation gives only an angular sky position (RA,
+Dec) at one epoch — nowhere near enough to fix a 6-parameter orbit.
+Determining one is an inverse problem: given many sky positions spread over
+time, find the six elements whose predicted positions best match all of
+them (classically via Gauss's/Laplace's method for an initial guess, then
+nonlinear least-squares differential correction). The `sigma` values
+`obsdata.fetch.query_sbdb` pulls out are the *formal* uncertainties from
+that fit's covariance matrix — how tightly constrained each element is
+*given the observations actually available*, not a fixed physical constant.
+This is why observational arc length matters so much for distant TNOs: an
+object with an orbital period of thousands of years barely moves along its
+orbit even over decades of astrometry (even extended via precovery), so
+short-arc fits leave large formal uncertainties — the concrete mechanism
+behind why real epochs, however many calendar years they span, still
+resolve only one dynamical state (see "Single-epoch snapshots" above).
+
+### Detectability: apparent vs. absolute magnitude
+
+Absolute magnitude `H` is the brightness a body would have at 1 AU from
+both Sun and observer at zero phase angle — a proxy for physical size
+(given an assumed albedo), independent of current geometry. It sets
+whether an object is detectable at all, via `V = H + 5·log₁₀(r·Δ)`
+(heliocentric distance × geocentric distance) — used identically on both
+sides: `simgen/selection.py`'s `SimpleSelectionFunction.apply` computes it
+to decide whether a simulated object clears the survey's limiting
+magnitude, and it's the same physical quantity real surveys use to decide
+what gets discovered. Because `r` depends on the object's own `(a, e)` and
+its *current* orbital phase `M` (via Kepler's equation,
+`_heliocentric_distance`), this correctly reproduces a real, well-known
+bias: eccentric objects are far easier to detect near perihelion than near
+aphelion, which is why real ETNO discoveries cluster near perihelion — the
+same effect at the center of the actual Brown/Batygin-vs-OSSOS clustering
+debate.
+
+### The assumed size (brightness) distribution
+
+`selection.py`'s `_sample_H` draws each detected candidate's absolute
+magnitude from a single power-law luminosity function
+(`dN/dH ∝ 10^(slope·H)`) rather than uniformly — real KBO/TNO populations
+have far more small/faint objects than large/bright ones. Range and slope
+are calibrated against real JPL SBDB data for 8 securely-classified ETNOs
+(Sedna through 2013 FT28, observed H range 1.5–7.2); the slope itself
+(`0.1`) is deliberately gentler than commonly-cited literature values
+(~0.7–0.9), because those are fit over a much narrower magnitude range in
+their source studies and blow up when extrapolated across this project's
+wider range (verified empirically — see the comment in `_sample_H`). Using
+the *detected* sample's own distribution directly would be circular
+reasoning, since it's already brightness-selected by construction.
 
 ### The selection function: the load-bearing piece
 
@@ -82,15 +277,66 @@ from surveys with a **published, characterized selection function**
 (OSSOS, DES, Rubin/Sorcha) — never an uncharacterized compilation like the
 raw MPC database.
 
-### Feature parity
+### Two filters, two different physical mechanisms
 
-The exact same feature-engineering code
-(`planetx.featurelib.build_feature_set`) is called from both the
-simulation pipeline (`planetx.simgen.selection`) and the real-data
-pipeline (`planetx.obsdata.build_x`). This is what prevents train/inference
-skew — if the two sides ever computed features differently, the network's
-posterior on real data would be unreliable regardless of how well training
-converged.
+Not every initial test particle ends up as a row in x. It passes through
+two independent stages:
+
+1. **Dynamical survival** (`worker.py`, real N-body physics) — over a
+   multi-Gyr integration, gravitational scattering genuinely ejects some
+   fraction of the disk (`o.a <= 0 or o.e >= 1.0` → dropped). This is a
+   real physical process, not a modeling artifact.
+2. **The selection function** (`selection.py`, observational bias, *not*
+   the body's own physics) — of the dynamical survivors, only those
+   clearing sky-coverage, magnitude, and tracking-efficiency cuts become a
+   row in x. See "The selection function: the load-bearing piece" above
+   for why realism here is critical, not optional.
+
+### Gravity computation: why `N_active` matters physically
+
+REBOUND's default gravity routine loops over particle pairs regardless of
+mass; without telling it that only the Sun/giants/HPX are massive
+(`sim.N_active = len(sim.particles)`, set right after adding them and
+before the massless disk), it computes forces for all 2000×2000
+test-particle-vs-test-particle pairs too — each contributing exactly zero
+physics (massless particles exert no gravity) but still costing compute.
+This isn't just a performance detail: it reflects the actual physical
+assumption the model makes (a massless test-particle disk that doesn't
+self-gravitate), and `N_active` is what tells REBOUND to compute forces
+consistent with that assumption instead of wasting cycles re-deriving zero.
+
+### Numerical integration validity: the timestep floor
+
+WHFast (a symplectic integrator) requires `dt` well below the shortest
+orbital period in the system — the standard rule of thumb is
+`dt <= P_min/20` — or it doesn't just lose precision, it aliases the
+fastest orbit into numerically meaningless dynamics. See the `dt_years`
+comment in `configs/prior.yaml` for the Jupiter-driven derivation of the
+current `0.5` year value. This same rule is part of why Mercury etc. are
+excluded (see "Why the inner planets aren't modeled at all" above): their
+short periods would force `dt` down by another ~40x, for physics smaller
+than the noise floor elsewhere in the model.
+
+### Known physical asymmetries and unvalidated assumptions
+
+- **Synthetic vs. real `sigma` come from different physical processes.** On
+  the simulated side, `sigma` is a hand-built heuristic (`_uncertainty_for`,
+  scaling with apparent magnitude). On the real side, it's the actual
+  formal uncertainty from a least-squares orbit fit against real
+  astrometry. Both land in the same schema columns, but if the synthetic
+  heuristic's uncertainty distribution doesn't resemble how real
+  orbit-fit uncertainty actually behaves, the network could be
+  miscalibrated on real data in a way training metrics wouldn't reveal.
+- **Reference frame consistency is assumed, not checked.** Both sides use
+  heliocentric, ecliptic, J2000 elements by convention (matching the JPL
+  SSD table `GIANT_PLANETS` was corrected against, and JPL SBDB's default
+  output) — nothing in code verifies a future data source uses the same
+  frame.
+- **Per-object epoch consistency in real data is assumed, not checked.**
+  Each SBDB response carries its own orbit-fit epoch (e.g.
+  `"epoch": "2461200.5"`), but `obsdata.fetch.RawOrbit` discards it —
+  objects pulled into one x are treated as simultaneous without verifying
+  their individual fit epochs are actually close together.
 
 ## Architecture
 
@@ -128,6 +374,39 @@ Neural Spline Flow) to produce `q_φ(θ | z)`. Training minimizes
 this NLL objective, not the architecture, is what gives a calibrated
 posterior instead of a point estimate that would collapse multimodal
 solutions to their mean.
+
+### Network input/output shapes
+
+Using the default construction —
+`PosteriorNet(object_feature_dim=11, theta_dim=7, survey_meta_dim=3, d_model=64, n_layers=3, n_heads=4, n_seeds=4)`,
+where `11 = len(OBJECT_FEATURE_KEYS)` and `7 = len(THETA_KEYS)` (`constants.py`):
+
+**Inputs** (from `model/train.py`'s `collate`, or `cli.py`'s `model_infer` for one real population):
+
+| tensor | shape | meaning |
+|---|---|---|
+| `features` | `[B, N, 11]` | padded population: `OBJECT_FEATURE_KEYS` columns per object |
+| `key_padding_mask` | `[B, N]` (bool) | `True` = padding, ignore this slot |
+| `survey_meta` | `[B, 3]` | `(sky_fraction, limiting_mag, tracking_efficiency)` |
+| `theta` | `[B, 7]` | training label only (`THETA_KEYS` order) — absent at inference |
+
+**Forward pass**, batch size `B`, population size `N`:
+
+| stage | operation | shape |
+|---|---|---|
+| `ObjectEncoder` | per-object MLP | `[B, N, 11]` → `[B, N, 64]` |
+| null-token concat | prepend learned, unmasked token | → `[B, N+1, 64]` |
+| `SelfAttentionBlock` ×3 | self-attention across objects, no positional encoding | `[B, N+1, 64]` → `[B, N+1, 64]` |
+| `PoolingByMultiheadAttention` | 4 seed vectors attend over the set | → `[B, 4, 64]` → reshaped `[B, 256]` |
+| `+ survey_meta_encoder` | `Linear(3, 256)` added in | `z: [B, 256]` |
+| `ConditionalPosteriorFlow` | zuko NSF conditioned on `z` | density over `θ ∈ ℝ⁷` |
+
+**Outputs:**
+
+| call | shape | meaning |
+|---|---|---|
+| `PosteriorNet.loss(...)` | scalar | `-mean(log q_φ(θ_true \| z))` — the training objective |
+| `PosteriorNet.posterior_samples(..., n=n)` | `[n, B, 7]` | `n` samples from `q_φ(θ \| z)` — the actual inference deliverable, not a point estimate |
 
 ## Project layout
 
@@ -259,8 +538,11 @@ TODO, rather than silently faking data):
 - `obsdata.orbitfit.refit_from_astrometry` — fallback orbit fit for objects
   without a usable SBDB covariance; needs an actual orbit-determination
   package (OpenOrb, find_orb) fed with archival/precovery astrometry.
-- `GIANT_PLANETS` in `constants.py` uses approximate mean J2000 elements;
-  replace with a JPL Horizons / DE440 query for production runs.
+- `GIANT_PLANETS` in `constants.py` uses J2000.0 elements from JPL SSD's
+  reference table (verified — see "Fixed constants vs. nuisance parameters
+  vs. θ" above for the correction history), not a live ephemeris. For
+  production runs at a different epoch, replace it with a live JPL
+  Horizons / DE440 query instead.
 - θ/feature standardization before the flow (currently raw physical units —
   AU, degrees, Earth masses) is omitted; see the note in `model/train.py`.
 

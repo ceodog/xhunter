@@ -6,9 +6,15 @@
 # fixed      -- physical constants held identical across every simulation
 #               (see planetx.constants.GIANT_PLANETS): known to far higher
 #               precision than would matter for the HPX signal, so they are
-#               NOT sampled and NOT part of theta.
+#               NOT sampled and NOT part of theta. This covers a, e, inc,
+#               Omega, omega -- the dynamically important architecture.
+#               Each giant's orbital PHASE (M) is a separate case: it's
+#               randomized uniformly per simulation directly in
+#               simgen/worker.py (not configured here), since t=0 doesn't
+#               correspond to a real calendar epoch anyway, so pinning
+#               every run to today's specific phase would be arbitrary.
 #
-# See README.md, "Why the giant planet masses aren't nuisance parameters".
+# See README.md, "Fixed constants vs. nuisance parameters vs. theta".
 
 theta_hpx:
   mass:
@@ -64,6 +70,20 @@ nuisance:
 
 simulation:
   n_test_particles: 2000
-  integration_years: 4.0e9
-  dt_years: 5.0
+  # Kept numerically equal to planetx.constants.SOLAR_SYSTEM_AGE_YEARS as a
+  # convention -- NOT because t=0 (today's GIANT_PLANETS elements) plus
+  # this many years equals real calendar "now" (it doesn't; that would
+  # require starting from an accurate primordial giant-planet configuration,
+  # which this project doesn't model). It's "long enough" for a synthetic
+  # disk to develop realistic structure under a representative giant-planet
+  # architecture. See the SOLAR_SYSTEM_AGE_YEARS comment in constants.py.
+  # If you change one, change the other.
+  integration_years: 4.5e9
+  # WHFast needs dt well below the shortest orbital period in the system --
+  # Jupiter's, at a=5.2 AU, P=a^1.5=~11.87 yr. 0.5 yr is ~1/24 of that, a
+  # safe margin (rule of thumb: dt <= P_min/20). At this dt, integrating to
+  # 4.5e9 yr is ~9e9 steps -- expensive; for iteration/testing, shorten
+  # integration_years rather than loosening dt, since dt is a numerical
+  # validity floor, not a tunable speed knob.
+  dt_years: 0.5
   use_gr: false   # optional 1-PN correction; forces ias15 integrator when true

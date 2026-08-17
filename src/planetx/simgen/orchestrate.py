@@ -42,7 +42,13 @@ def _run_and_select(args: tuple[PriorConfig, SelectionFunction, int]) -> dict:
 
     return {
         "seed": seed,
-        "theta": theta_to_vector(theta).tolist(),
+        # hpx_final, not the pre-integration `theta` sampled above: the label
+        # must be HPX's state at the SAME final epoch as x (result["tnos"]),
+        # since real inference wants HPX's *current* parameters (to know
+        # where to point a telescope), not its state at some assumed
+        # primordial starting epoch -- see README.md, "Single-epoch
+        # snapshots, not time series".
+        "theta": theta_to_vector(result["hpx_final"]).tolist(),
         "features": fset.features.tolist(),
         "survey_meta": fset.survey_meta.tolist(),
         "n_objects": fset.n_objects,
