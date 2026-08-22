@@ -1,0 +1,68 @@
+# Fast dev/smoke-test variant of prior.yaml -- same theta_hpx/nuisance
+# priors (those aren't what's expensive), but a drastically shorter
+# integration and smaller test-particle disk, so `planetx simgen run` and
+# the rest of the pipeline can be exercised end to end in minutes instead
+# of days. See README.md, "How long will simulations take" / the
+# per-step cost benchmark: cost/step ~= 1.8us + 0.33us * n_test_particles.
+# At the settings below: ~2e6 steps * ~35us/step =~ 70s per simulation.
+#
+# NOT scientifically valid on its own -- 1 Myr is far too short to develop
+# the resonant/secular structure the real signal depends on (see
+# README.md, "Single-epoch snapshots": that structure needs Gyr-scale
+# integration to emerge). Use this only to validate that the pipeline
+# runs correctly; use prior.yaml for anything meant to produce a real
+# posterior.
+
+theta_hpx:
+  mass:
+    dist: loguniform
+    low: 1.0     # Earth masses
+    high: 15.0
+  a:
+    dist: uniform
+    low: 250.0   # AU
+    high: 800.0
+  e:
+    dist: uniform
+    low: 0.1
+    high: 0.6
+  i:
+    dist: uniform
+    low: 0.0     # deg
+    high: 40.0
+  Omega:
+    dist: uniform
+    low: 0.0     # deg
+    high: 360.0
+  omega:
+    dist: uniform
+    low: 0.0     # deg
+    high: 360.0
+  M:
+    dist: uniform
+    low: 0.0     # deg -- orbital phase, expect a near-flat posterior
+    high: 360.0
+
+nuisance:
+  disk_inner_edge:
+    dist: uniform
+    low: 30.0    # AU
+    high: 45.0
+  disk_outer_edge:
+    dist: uniform
+    low: 50.0    # AU
+    high: 100.0
+  disk_e_scale:
+    dist: uniform
+    low: 0.01
+    high: 0.15
+  disk_i_scale:
+    dist: uniform
+    low: 1.0     # deg
+    high: 10.0
+
+simulation:
+  n_test_particles: 100     # vs. 500 in prior.yaml
+  integration_years: 1.0e6  # vs. 4.0e9 in prior.yaml
+  dt_years: 0.5              # unchanged: still a numerical validity floor, not a speed knob
+  use_gr: false

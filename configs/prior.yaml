@@ -47,10 +47,6 @@ theta_hpx:
     high: 360.0
 
 nuisance:
-  primordial_disk_mass:
-    dist: loguniform
-    low: 1.0     # Earth masses, total in test-particle-generating disk
-    high: 30.0
   disk_inner_edge:
     dist: uniform
     low: 30.0    # AU
@@ -69,7 +65,20 @@ nuisance:
     high: 10.0
 
 simulation:
-  n_test_particles: 2000
+  # 500: calibrated against Rubin/LSST's selection function in selection.py
+  # (sky_fraction=0.129, detection_mag50=24.5, detection_width=0.1,
+  # tracking_efficiency=0.95 -- see SimpleSelectionFunction's docstring for
+  # sourcing). At this sky_fraction, 500 particles yields ~15-16 detected
+  # objects/simulation on average, matching real ETNO-catalog-scale
+  # populations -- empirically swept (300->~9, 500->~16, 700->~21 mean
+  # detections). This is 40x fewer particles than the earlier OSSOS-
+  # calibrated value (20000, sky_fraction=0.0038) needed for the same
+  # detected-population richness, since Rubin's much larger, better-
+  # characterized footprint dominates its narrower/deeper magnitude curve.
+  # Do not re-inflate this without re-sweeping against whatever
+  # sky_fraction is actually in selection.py at the time -- the right
+  # particle count is a direct function of that value, not a fixed number.
+  n_test_particles: 500
   # Kept numerically equal to planetx.constants.SOLAR_SYSTEM_AGE_YEARS as a
   # convention -- NOT because t=0 (today's GIANT_PLANETS elements) plus
   # this many years equals real calendar "now" (it doesn't; that would

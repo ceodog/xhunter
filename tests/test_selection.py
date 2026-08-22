@@ -35,6 +35,7 @@ def test_selection_function_full_sky_bright_objects_detects_most():
     ]
     sel = SimpleSelectionFunction(
         sky_fraction=1.0, limiting_mag=30.0, tracking_efficiency=1.0,
+        detection_peak=1.0,  # override the OSSOS-calibrated <100% plateau for this saturation test
         absolute_mag_range=(4.0, 5.0),
     )
     fset = sel.apply(tnos, rng)

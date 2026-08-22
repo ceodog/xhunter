@@ -84,7 +84,7 @@ Three different roles, easy to conflate:
 | | Sampled per simulation? | Marginalized? | Example |
 |---|---|---|---|
 | θ | yes | no — this is the label | HPX mass, a, e, i, Ω, ω, M |
-| nuisance | yes | yes (never a label) | primordial disk mass/extent, disk excitation |
+| nuisance | yes | yes (never a label) | primordial disk extent, disk excitation |
 | fixed | no — same every run | n/a | giant planet masses, a, e, inc, Ω, ω |
 
 The giant planets' masses and dynamical architecture (`a, e, inc, Ω, ω`)
@@ -297,7 +297,7 @@ two independent stages:
 REBOUND's default gravity routine loops over particle pairs regardless of
 mass; without telling it that only the Sun/giants/HPX are massive
 (`sim.N_active = len(sim.particles)`, set right after adding them and
-before the massless disk), it computes forces for all 2000×2000
+before the massless disk), it computes forces for all 20000×20000
 test-particle-vs-test-particle pairs too — each contributing exactly zero
 physics (massless particles exert no gravity) but still costing compute.
 This isn't just a performance detail: it reflects the actual physical
@@ -526,9 +526,14 @@ the CLI wiring all of it together.
 **Deliberately stubbed** (each raises `NotImplementedError` with a specific
 TODO, rather than silently faking data):
 
-- `simgen.selection.SimpleSelectionFunction` — an illustrative
-  magnitude/sky-fraction/tracking-efficiency cut, **not** a real survey
-  simulator. Swap in the [OSSOS Survey
+- `simgen.selection.SimpleSelectionFunction` — a smooth magnitude-efficiency
+  falloff + sky-fraction + tracking-efficiency cut, with its constants
+  calibrated against OSSOS's own published survey characterization (see the
+  class docstring for sourcing and exact numbers). Calibrated defaults do
+  **not** make this a real survey simulator: detection here is still a flat,
+  position- and epoch-independent probability, not a check against actual
+  pointing history on the sky at a real observation date, and it has no
+  rate-of-motion cut. Swap in the [OSSOS Survey
   Simulator](https://github.com/OSSOS/SurveySimulator) or
   [Sorcha](https://github.com/dirac-institute/sorcha) before trusting
   results on real data — see "The selection function" above.

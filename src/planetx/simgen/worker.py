@@ -124,6 +124,14 @@ def run_one(
         rebx_ref = _maybe_add_gr(sim)  # noqa: F841 (kept alive for integrator lifetime)
     else:
         sim.integrator = "whfast"
+        # safe_mode defaults to 1, which resynchronizes (recomputes Jacobi
+        # coordinates from scratch) every single step -- REBOUND's own docs
+        # call this "substantially slower... than it can be." safe_mode=0 is
+        # safe here specifically because run_one() never reads or modifies
+        # particle state mid-integration -- state is read only once, after
+        # sim.integrate() returns below, which is exactly the access pattern
+        # safe_mode=0 is designed for.
+        sim.integrator.safe_mode = 0
         sim.dt = dt_years
 
     sim.integrate(integration_years)
