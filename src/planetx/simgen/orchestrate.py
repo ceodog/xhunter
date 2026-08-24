@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import concurrent.futures as cf
 import logging
+import os
 from pathlib import Path
 
 import numpy as np
@@ -23,8 +24,25 @@ from planetx.simgen.worker import run_one
 
 logger = logging.getLogger(__name__)
 
+# Per-WORKER-PROCESS completed-simulation counter (not shared across
+# processes -- each ProcessPoolExecutor worker gets its own copy of module
+# globals, so this correctly accumulates "how many sims has THIS worker
+# process run" across the multiple tasks a pool worker is reused for).
+_worker_completed = 0
+
+
+def _init_worker_logging(level: int) -> None:
+    """ProcessPoolExecutor initializer: on macOS/Windows (multiprocessing's
+    'spawn' start method), a worker process is a fresh interpreter that does
+    NOT inherit the parent's already-configured logging handlers -- without
+    this, _run_and_select's per-worker progress logging would silently be a
+    no-op there (it would appear to work by accident on Linux's 'fork'
+    default, which does inherit parent state, masking the problem)."""
+    logging.basicConfig(level=level, format="%(message)s")
+
 
 def _run_and_select(args: tuple[PriorConfig, SelectionFunction, int]) -> dict:
+    global _worker_completed
     prior_config, selection_fn, seed = args
     rng = np.random.default_rng(seed)
 
@@ -43,6 +61,10 @@ def _run_and_select(args: tuple[PriorConfig, SelectionFunction, int]) -> dict:
         disk_backend=sim_cfg.disk_backend,
     )
     fset = selection_fn.apply(result["tnos"], rng)
+
+    _worker_completed += 1
+    logger.info("worker pid=%d: completed sim seed=%d (%d done by this worker)",
+                os.getpid(), seed, _worker_completed)
 
     return {
         "seed": seed,
@@ -67,12 +89,24 @@ def generate_dataset(
     n_workers: int = 4,
     seed0: int = 0,
     selection_fn: SelectionFunction | None = None,
+    use_tqdm: bool = False,
 ) -> None:
     """Write shard_00000.parquet, shard_00001.parquet, ... to out_dir.
 
     Each row is one (x, theta) training pair: theta (7,), features (N, 11)
     ragged, survey_meta (3,), n_objects. Downstream training reads these
     shards with a streaming loader rather than concatenating them in memory.
+
+    Progress: each worker process logs its own completions as they happen
+    (see _run_and_select) -- genuine per-worker visibility, not just an
+    aggregate count, since with simulations this long-running (hours to
+    days each) knowing THIS worker is stuck/progressing matters. The main
+    process additionally logs an aggregate summary roughly every 1% of each
+    shard (or drives a tqdm bar instead if use_tqdm=True and tqdm is
+    installed -- tqdm's carriage-return-based bar renders nicely in an
+    interactive terminal but is noisy in a redirected/Cloud-Logging-captured
+    log file, which is why it's opt-in rather than the default for this
+    project's actual cluster-batch use case).
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -81,11 +115,35 @@ def generate_dataset(
     seeds = list(range(seed0, seed0 + n_simulations))
     n_shards = (n_simulations + shard_size - 1) // shard_size
 
-    with cf.ProcessPoolExecutor(max_workers=n_workers) as ex:
+    tqdm_cls = None
+    if use_tqdm:
+        try:
+            from tqdm import tqdm as tqdm_cls
+        except ImportError:
+            logger.warning("use_tqdm=True but tqdm isn't installed -- falling back to 1%%-interval logging")
+
+    root_level = logging.getLogger().getEffectiveLevel()
+    with cf.ProcessPoolExecutor(
+        max_workers=n_workers, initializer=_init_worker_logging, initargs=(root_level,)
+    ) as ex:
         for shard_idx in range(n_shards):
             shard_seeds = seeds[shard_idx * shard_size : (shard_idx + 1) * shard_size]
             args = [(prior_config, selection_fn, s) for s in shard_seeds]
-            records = list(ex.map(_run_and_select, args))
+            n_shard = len(args)
+            log_every = max(1, n_shard // 100)  # ~every 1%
+
+            futures = [ex.submit(_run_and_select, a) for a in args]
+            completed = cf.as_completed(futures)
+            if tqdm_cls is not None:
+                completed = tqdm_cls(completed, total=n_shard, desc=f"shard {shard_idx + 1}/{n_shards}")
+
+            records = []
+            for i, future in enumerate(completed, start=1):
+                records.append(future.result())
+                if tqdm_cls is None and (i % log_every == 0 or i == n_shard):
+                    logger.info("shard %d/%d: %d/%d sims done (%.0f%%)",
+                                shard_idx + 1, n_shards, i, n_shard, 100 * i / n_shard)
+
             df = pd.DataFrame.from_records(records)
             df.to_parquet(out_dir / f"shard_{shard_idx:05d}.parquet")
             logger.info("wrote shard %d/%d (%d sims) -> %s", shard_idx + 1, n_shards, len(records), out_dir)

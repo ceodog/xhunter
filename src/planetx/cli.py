@@ -42,13 +42,18 @@ def simgen() -> None:
 @click.option("--shard-size", default=500, show_default=True)
 @click.option("--workers", default=4, show_default=True)
 @click.option("--seed0", default=0, show_default=True)
-def simgen_run(prior_path, out_dir, n_sims, shard_size, workers, seed0) -> None:
+@click.option(
+    "--progress-bar", "use_tqdm", is_flag=True, default=False,
+    help="use a tqdm progress bar (interactive terminals) instead of periodic "
+         "1%-interval log lines (better for redirected/cloud-captured logs, the default)",
+)
+def simgen_run(prior_path, out_dir, n_sims, shard_size, workers, seed0, use_tqdm) -> None:
     from planetx.simgen.orchestrate import generate_dataset
 
     prior_config = PriorConfig.from_yaml(prior_path)
     generate_dataset(
         prior_config=prior_config, out_dir=out_dir, n_simulations=n_sims,
-        shard_size=shard_size, n_workers=workers, seed0=seed0,
+        shard_size=shard_size, n_workers=workers, seed0=seed0, use_tqdm=use_tqdm,
     )
 
 
