@@ -317,6 +317,41 @@ excluded (see "Why the inner planets aren't modeled at all" above): their
 short periods would force `dt` down by another ~40x, for physics smaller
 than the noise floor elsewhere in the model.
 
+### Disk propagation backend: `simulation.disk_backend`
+
+By default (`disk_backend: rebound`), every test particle is integrated by
+REBOUND alongside the massive bodies — the only validated option, and the
+only one any shipped config uses. Two opt-in, exploratory alternatives exist
+in `planetx.simgen.secular` (closed-form linear Laplace-Lagrange secular
+theory, ported from a research investigation — see that module's docstring
+for the derivation and, more importantly, its measured accuracy limits):
+
+- `disk_backend: secular` — every test particle propagated by the closed
+  form instead of N-body. Roughly 8800x cheaper *for the disk-propagation
+  cost alone*, but the massive bodies (Sun + giants + HPX) still require
+  real N-body regardless of this setting (HPX's own final state is the
+  training label, and was never validated via the secular route), so the
+  net simulation speedup is closer to ~100x at this project's production
+  settings. Measurably fails on particles inside a Neptune mean-motion
+  resonance specifically (in one direct benchmark, inclination correlation
+  with true N-body went *negative*).
+- `disk_backend: hybrid` — resonant particles are routed to real N-body
+  (added to the same REBOUND sim as the massive bodies), non-resonant ones
+  use the closed form. ~14-16x cheaper than `rebound` at production scale,
+  avoiding the resonant-particle failure mode above.
+
+Both alternatives were validated only out to 2e7 yr of simulated time — 225x
+short of this project's `integration_years=4.5e9` — and that shorter test
+already showed real degradation with timescale (per-particle correlation
+roughly halving from a 2e6 yr to a 2e7 yr comparison), plus a specific,
+concerning signature: predicted `Ω` (node) clustering came out *weaker* than
+true N-body's, i.e. the exact kind of signal this project exists to detect.
+Neither backend can model dynamical ejection (the closed form is bounded by
+construction, so it silently keeps particles a real integration would have
+ejected — ~5% of a disk within just 2e7 yr, measured). Do not use either for
+real training-set generation without re-reading `secular.py`'s docstring and
+re-validating at something closer to production timescale first.
+
 ### Known physical asymmetries and unvalidated assumptions
 
 - **Synthetic vs. real `sigma` come from different physical processes.** On

@@ -33,6 +33,10 @@ class SimulationConfig:
     integration_years: float
     dt_years: float
     use_gr: bool = False
+    # "rebound" (validated, default) | "secular" | "hybrid" (opt-in,
+    # exploratory -- see planetx.simgen.secular's module docstring for the
+    # measured accuracy caveats before changing this in a shipped config).
+    disk_backend: str = "rebound"
 
 
 @dataclass(frozen=True)
@@ -52,5 +56,6 @@ class PriorConfig:
             integration_years=float(raw["simulation"]["integration_years"]),
             dt_years=float(raw["simulation"]["dt_years"]),
             use_gr=bool(raw["simulation"].get("use_gr", False)),
+            disk_backend=str(raw["simulation"].get("disk_backend", "rebound")),
         )
         return cls(theta_hpx=theta_hpx, nuisance=nuisance, simulation=sim)

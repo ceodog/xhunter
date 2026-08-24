@@ -14,6 +14,7 @@ import numpy as np
 import rebound
 
 from planetx.constants import EARTH_MASS_IN_MSUN, GIANT_PLANETS, THETA_KEYS
+from planetx.simgen import secular
 
 
 def _add_giant_planets(sim: "rebound.Simulation", rng: np.random.Generator) -> None:
@@ -68,6 +69,23 @@ def _add_primordial_disk(
     return hashes
 
 
+def _sample_primordial_disk(nuisance: dict[str, float], n: int, rng: np.random.Generator) -> dict[str, np.ndarray]:
+    """Same distributions as _add_primordial_disk, but returns arrays
+    instead of adding particles to a REBOUND sim -- used by disk_backend
+    "secular"/"hybrid", which need to inspect/route particles before (if at
+    all) adding them to REBOUND. Uses vectorized rng calls, so it does NOT
+    reproduce _add_primordial_disk's per-particle values for the same seed
+    (different draw order) -- not a concern, since these backends are a
+    different computational method, not required to bit-match "rebound"."""
+    a = rng.uniform(nuisance["disk_inner_edge"], nuisance["disk_outer_edge"], n)
+    e = np.clip(rng.rayleigh(nuisance["disk_e_scale"], n), 0.0, 0.9)
+    inc = np.radians(np.clip(rng.rayleigh(nuisance["disk_i_scale"], n), 0.0, 60.0))
+    Omega = rng.uniform(0, 2 * np.pi, n)
+    omega = rng.uniform(0, 2 * np.pi, n)
+    M = rng.uniform(0, 2 * np.pi, n)
+    return {"a": a, "e": e, "inc": inc, "Omega": Omega, "omega": omega, "M": M}
+
+
 def _maybe_add_gr(sim: "rebound.Simulation") -> None:
     """Optional 1-PN correction. gr_full is velocity-dependent and requires
     IAS15 (WHFast does not support it) -- see REBOUNDx docs. Left disabled by
@@ -91,8 +109,25 @@ def run_one(
     dt_years: float,
     use_gr: bool,
     seed: int,
+    disk_backend: str = "rebound",
 ) -> dict:
     """Run a single hypothetical-Solar-System simulation and return its final state.
+
+    disk_backend selects how the massless test-particle disk is propagated
+    (the Sun + 4 giants + HPX always integrate via real REBOUND N-body,
+    regardless of this setting -- see planetx.simgen.secular's module
+    docstring for why):
+      "rebound" (default): every test particle integrated by REBOUND.
+        Validated, expensive -- the only backend used in any shipped config.
+      "secular": every test particle propagated by closed-form linear
+        secular theory (planetx.simgen.secular). ~8800x cheaper, but
+        measurably worse accuracy, especially for particles inside a
+        Neptune mean-motion resonance -- see secular.py's module docstring
+        for the caveats. Opt-in / exploratory only.
+      "hybrid": resonant test particles routed to real N-body, the rest use
+        the closed form. ~14-16x cheaper than "rebound" at this project's
+        production scale; same caveats as "secular", less severe since the
+        resonant subset is excluded. Opt-in / exploratory only.
 
     Returns a dict with:
       theta:        the sampled HPX parameter dict (the training label)
@@ -100,6 +135,9 @@ def run_one(
       tnos:         list of dicts, one per surviving test particle, with
                     keys a, e, i (deg), Omega (deg), omega (deg)
     """
+    if disk_backend not in ("rebound", "secular", "hybrid"):
+        raise ValueError(f"Unknown disk_backend: {disk_backend!r} (expected 'rebound', 'secular', or 'hybrid')")
+
     rng = np.random.default_rng(seed)
 
     sim = rebound.Simulation()
@@ -115,7 +153,21 @@ def run_one(
     # quadratically in n_test_particles instead of linearly -- empirically,
     # ~33x slower at n_test_particles=2000 on this project's benchmark.
     sim.N_active = len(sim.particles)
-    _add_primordial_disk(sim, nuisance, n_test_particles, rng)
+
+    disk = None
+    disk_resonant = None
+    if disk_backend == "rebound":
+        _add_primordial_disk(sim, nuisance, n_test_particles, rng)
+    else:
+        disk = _sample_primordial_disk(nuisance, n_test_particles, rng)
+        if disk_backend == "hybrid":
+            disk_resonant = secular.resonant_mask(disk["a"], disk["e"])
+            for idx in np.flatnonzero(disk_resonant):
+                sim.add(
+                    m=0.0, a=disk["a"][idx], e=disk["e"][idx], inc=disk["inc"][idx],
+                    Omega=disk["Omega"][idx], omega=disk["omega"][idx], M=disk["M"][idx],
+                    name=f"tno_{idx}",
+                )
 
     sim.move_to_com()
 
@@ -146,19 +198,42 @@ def run_one(
     }
 
     tnos = []
-    for p in sim.particles[5:]:  # sun + 4 giants + hpx = indices 0..5
-        if p.name == "hpx":
-            continue
-        try:
-            o = p.orbit(primary=sim.particles[0])
-        except RuntimeError:
-            continue  # unbound / ejected particle
-        if o.a <= 0 or o.e >= 1.0:
-            continue  # ejected or hyperbolic
-        tnos.append({
-            "a": o.a, "e": o.e, "i": np.degrees(o.inc),
-            "Omega": np.degrees(o.Omega) % 360.0, "omega": np.degrees(o.omega) % 360.0,
-            "M": np.degrees(o.M) % 360.0,
-        })
+    if disk_backend == "rebound":
+        for p in sim.particles[5:]:  # sun + 4 giants + hpx = indices 0..5
+            if p.name == "hpx":
+                continue
+            try:
+                o = p.orbit(primary=sim.particles[0])
+            except RuntimeError:
+                continue  # unbound / ejected particle
+            if o.a <= 0 or o.e >= 1.0:
+                continue  # ejected or hyperbolic
+            tnos.append({
+                "a": o.a, "e": o.e, "i": np.degrees(o.inc),
+                "Omega": np.degrees(o.Omega) % 360.0, "omega": np.degrees(o.omega) % 360.0,
+                "M": np.degrees(o.M) % 360.0,
+            })
+    else:
+        if disk_backend == "hybrid":
+            resonant_indices = np.flatnonzero(disk_resonant)
+            for k, idx in enumerate(resonant_indices):
+                p = sim.particles[6 + k]  # sun + 4 giants + hpx = indices 0..5
+                try:
+                    o = p.orbit(primary=sim.particles[0])
+                except RuntimeError:
+                    continue
+                if o.a <= 0 or o.e >= 1.0:
+                    continue
+                tnos.append({
+                    "a": o.a, "e": o.e, "i": np.degrees(o.inc),
+                    "Omega": np.degrees(o.Omega) % 360.0, "omega": np.degrees(o.omega) % 360.0,
+                    "M": np.degrees(o.M) % 360.0,
+                })
+            secular_indices = np.flatnonzero(~disk_resonant)
+        else:  # "secular"
+            secular_indices = np.arange(n_test_particles)
+
+        eigsys = secular.EigenSystem(secular.massive_body_elements(theta))
+        tnos.extend(secular.propagate_disk(eigsys, disk, secular_indices, integration_years))
 
     return {"theta": {k: theta[k] for k in THETA_KEYS}, "hpx_final": hpx_final, "tnos": tnos}

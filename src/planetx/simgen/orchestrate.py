@@ -10,6 +10,7 @@ kept picklable and side-effect-free to make that swap mechanical.
 from __future__ import annotations
 
 import concurrent.futures as cf
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -19,6 +20,8 @@ from planetx.config import PriorConfig
 from planetx.simgen.priors import sample_nuisance, sample_theta, theta_to_vector
 from planetx.simgen.selection import SelectionFunction, SimpleSelectionFunction
 from planetx.simgen.worker import run_one
+
+logger = logging.getLogger(__name__)
 
 
 def _run_and_select(args: tuple[PriorConfig, SelectionFunction, int]) -> dict:
@@ -37,6 +40,7 @@ def _run_and_select(args: tuple[PriorConfig, SelectionFunction, int]) -> dict:
         dt_years=sim_cfg.dt_years,
         use_gr=sim_cfg.use_gr,
         seed=seed,
+        disk_backend=sim_cfg.disk_backend,
     )
     fset = selection_fn.apply(result["tnos"], rng)
 
@@ -84,4 +88,4 @@ def generate_dataset(
             records = list(ex.map(_run_and_select, args))
             df = pd.DataFrame.from_records(records)
             df.to_parquet(out_dir / f"shard_{shard_idx:05d}.parquet")
-            print(f"wrote shard {shard_idx + 1}/{n_shards} ({len(records)} sims) -> {out_dir}")
+            logger.info("wrote shard %d/%d (%d sims) -> %s", shard_idx + 1, n_shards, len(records), out_dir)

@@ -66,3 +66,4 @@ simulation:
   integration_years: 1.0e6  # vs. 4.0e9 in prior.yaml
   dt_years: 0.5              # unchanged: still a numerical validity floor, not a speed knob
   use_gr: false
+  disk_backend: rebound     # see prior.yaml -- "secular"/"hybrid" exist but are opt-in/exploratory

@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import click
@@ -21,6 +22,11 @@ from planetx.constants import OBJECT_FEATURE_KEYS, THETA_KEYS
 @click.group()
 def main() -> None:
     """planetx: amortized simulation-based inference for a hypothetical Planet X."""
+    # Library modules (simgen.orchestrate, model.train) log via
+    # logging.getLogger(__name__) rather than print(), so this is the one
+    # place output actually needs to be turned on -- format matches the
+    # bare progress-message style those print() calls used to have.
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 
 # ---------------------------------------------------------------- simgen ---

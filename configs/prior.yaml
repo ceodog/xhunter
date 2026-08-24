@@ -96,3 +96,13 @@ simulation:
   # validity floor, not a tunable speed knob.
   dt_years: 0.5
   use_gr: false   # optional 1-PN correction; forces ias15 integrator when true
+  # disk_backend: how the massless test-particle disk is propagated (the
+  # massive bodies -- Sun+giants+HPX -- always use real N-body regardless of
+  # this setting). "rebound" is the only validated option and MUST stay the
+  # default in this file. "secular"/"hybrid" (planetx.simgen.secular) are
+  # ~14-8800x cheaper but were validated only out to 2e7 yr (225x short of
+  # integration_years above) and measurably degrade at longer timescales,
+  # including under-representing Omega clustering -- the actual signal this
+  # project exists to detect. Do not switch this away from "rebound" for
+  # real training-set generation without re-reading secular.py's docstring.
+  disk_backend: rebound

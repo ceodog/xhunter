@@ -107,11 +107,23 @@ def propagate_massive_hk(g, V, z0, t):
 def particle_coupling(a_p, a_j_arr, m_j_arr, M_sun=1.0):
     """Test particle at a_p under massive bodies at a_j_arr (masses m_j_arr).
     Returns (A_free, B_free, A_j[], B_j[]) -- own free rate + per-body
-    forcing coefficients."""
+    forcing coefficients.
+
+    BUG FOUND AND FIXED (this session, via e-scaling diagnostic): alphabar_j
+    must trigger on whether the TEST PARTICLE (a_p) is interior to the
+    perturber (a_j_arr), not the other way around -- a previous version
+    checked `a_j_arr < a_p` (perturber interior to particle), which is
+    backwards and silently multiplied A_free/A_j by a spurious extra factor
+    of alpha_j whenever the particle was exterior to a perturber (the
+    common case for this disk). Confirmed via direct comparison against the
+    independently validated single-perturber rate formula in
+    test_secular_theory.py's predicted_rates -- the buggy version was off
+    by exactly a factor of alpha (0.668 for a_test=45, a_neptune=30.07).
+    """
     n_p = np.sqrt(GM_SUN / a_p**3)
     eps_j = m_j_arr / M_sun
     alpha_j = np.where(a_j_arr < a_p, a_j_arr / a_p, a_p / a_j_arr)
-    alphabar_j = np.where(a_j_arr < a_p, alpha_j, 1.0)
+    alphabar_j = np.where(a_p < a_j_arr, alpha_j, 1.0)
     b1 = np.array([laplace_b(1.5, 1, a) for a in alpha_j])
     b2 = np.array([laplace_b(1.5, 2, a) for a in alpha_j])
     A_j = -(n_p / 4.0) * eps_j * alpha_j * alphabar_j * b2

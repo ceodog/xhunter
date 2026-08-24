@@ -10,6 +10,7 @@ unnecessarily hard to optimize.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -19,6 +20,8 @@ from torch.utils.data import DataLoader, Dataset
 
 from planetx.constants import OBJECT_FEATURE_KEYS, THETA_KEYS
 from planetx.model.posterior_net import PosteriorNet
+
+logger = logging.getLogger(__name__)
 
 
 class ShardedSimDataset(Dataset):
@@ -108,7 +111,7 @@ def train(
             opt.step()
             total += loss.item()
             n_batches += 1
-        print(f"epoch {epoch + 1}/{epochs}  mean NLL = {total / max(n_batches, 1):.4f}")
+        logger.info("epoch %d/%d  mean NLL = %.4f", epoch + 1, epochs, total / max(n_batches, 1))
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     torch.save(net.state_dict(), out_path)
