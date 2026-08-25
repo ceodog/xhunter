@@ -42,6 +42,26 @@ dependencies = [
 # use_gr=True).
 gr = ["reboundx>=4.3"]
 
+# Only needed for the GPU-accelerated simgen backends (planetx.simgen.gpu_nbody,
+# gpu_secular, orchestrate_gpu -- `planetx simgen run-gpu`). Kept out of the base
+# dependency set for the same reason bench_test_particle_integrator.py's docstring
+# already documents for numba on the CPU side.
+#
+# CONFIRMED (2026-08-25, this dev machine): `uv sync --extra gpu` resolves fine
+# (numba==0.67.0, llvmlite==0.49.0) but FAILS TO BUILD on Intel Mac (darwin/
+# x86_64, this project's required-environments target above) -- llvmlite 0.49.0
+# ships prebuilt wheels for macosx arm64 and manylinux (Linux) x86_64/aarch64,
+# but none for macosx x86_64, so it falls back to a source build that errors out
+# (same failure mode bench_test_particle_integrator.py already documented for
+# the CPU-numba case, different root cause: that one was numpy-pin skew, this
+# one is a missing wheel). This is NOT a resolution/version conflict -- a Linux
+# GPU host (the only place this extra is actually useful, since it also needs a
+# real NVIDIA GPU) has manylinux wheels available and installs cleanly; verified
+# this way in the Colab A100 session gpu_nbody.py/gpu_secular.py were developed
+# and validated against. Only an issue if you try to install this extra on an
+# Intel Mac dev machine specifically.
+gpu = ["numba>=0.61"]
+
 [project.scripts]
 planetx = "planetx.cli:main"
 
