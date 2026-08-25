@@ -43,7 +43,16 @@ class ShardedSimDataset(Dataset):
 
     def __getitem__(self, idx: int) -> dict:
         row = self.df.iloc[idx]
-        features = np.asarray(row["features"], dtype=np.float32)
+        # np.asarray(row["features"], dtype=...) raises "setting an array element
+        # with a sequence" when exactly one object was detected: numpy's ragged-
+        # array shape inference is ambiguous for a single-element array of arrays
+        # (it can't tell a 1-object detection from "flatten this"). Routing through
+        # .tolist() first removes the ambiguity -- confirmed against n_objects=0,
+        # 1, and >=2 rows from a real GPU-generated shard (orchestrate_gpu.py) that
+        # tripped this exact case; the CPU path (orchestrate.py) writes the same
+        # schema and was equally exposed, just rarely hit at production's larger
+        # disk sizes where "exactly 1 detection" is a rarer outcome.
+        features = np.array(row["features"].tolist(), dtype=np.float32)
         if features.size == 0:
             features = features.reshape(0, len(OBJECT_FEATURE_KEYS))
         else:

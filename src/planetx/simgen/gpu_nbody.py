@@ -17,19 +17,22 @@ NOT imported anywhere in the default (CPU) pipeline; only
 orchestrate_gpu.py imports it, and only when a GPU backend is explicitly
 requested.
 
-Validation status (2026-08-25, Colab A100): the kernel physics itself
-(block_per_sim_kernel below) is validated to ~1e-10 AU against both the
-NumPy reference and REBOUND (see blockpersim_cuda.py). The NEW piece added
-here -- run_ensemble_gpu_nbody's REBOUND-based initial-condition sampling
-(reusing worker._add_giant_planets/_add_hpx/_add_primordial_disk verbatim,
-so this matches worker.run_one's own sampling exactly) plus
-state_to_elements' Cartesian-to-elements conversion and the a<=0/e>=1
-survival filter -- has NOT yet been validated against a live REBOUND run
-end-to-end. Do this before trusting output from this module for a real
-dataset: run a REBOUND-backed worker.run_one and this module's
-run_ensemble_gpu_nbody on the SAME sampled theta/nuisance/seed and compare
-hpx_final/tnos directly, the same discipline every other GPU port in this
-project's history was held to before being trusted.
+Validation status (2026-08-25, Colab A100, gpu-backend-colab-validation
+branch): validated end-to-end against a live REBOUND worker.run_one() call
+on the SAME sampled theta/nuisance/seed (dt_years=0.5, integration_years=
+5000 dev-scale smoke test): hpx_final and tnos both match to the same
+O(dt^2) symplectic-truncation-level differences already documented
+throughout this project's history for this from-scratch Kepler-drift
+kernel vs. REBOUND's own WHFast (e.g. a: diff ~0.03 AU at dt=0.5, matching
+the magnitude blockpersim_dev_validate.py's own dt=0.5 pass reported) --
+not roundoff-identical (different integrator implementations), but the
+same already-characterized discrepancy, not a new bug.
+run_ensemble_gpu_massive_only's hpx_final matched run_ensemble_gpu_nbody's
+bit-for-bit (expected: massless test particles don't back-react on the
+massive bodies). generate_dataset_gpu (orchestrate_gpu.py) was run
+end-to-end for both gpu_mode values, and the resulting shards were loaded
+and trained on via the REAL model.train.train() (see that module's
+now-fixed ShardedSimDataset bug, found via this exact validation pass).
 """
 
 from __future__ import annotations
