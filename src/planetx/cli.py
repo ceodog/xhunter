@@ -57,6 +57,37 @@ def simgen_run(prior_path, out_dir, n_sims, shard_size, workers, seed0, use_tqdm
     )
 
 
+@simgen.command("run-gpu")
+@click.option("--prior", "prior_path", required=True, type=click.Path(exists=True))
+@click.option("--out", "out_dir", required=True, type=click.Path())
+@click.option("--n-sims", default=1000, show_default=True)
+@click.option(
+    "--gpu-mode", default="full_nbody", show_default=True,
+    type=click.Choice(["full_nbody", "hybrid_secular"]),
+    help="full_nbody: massive bodies + disk all via real N-body on GPU (no approximation, "
+         "physically equivalent to disk_backend=rebound). hybrid_secular: massive bodies via "
+         "GPU N-body, disk via GPU closed-form secular theory -- faster but inherits "
+         "planetx.simgen.secular's documented accuracy caveats (see that module's docstring).",
+)
+@click.option(
+    "--shard-size", default=500, show_default=True,
+    help="also the GPU batch size -- one shard is one set of kernel launches, not just a "
+         "checkpoint granularity (unlike `run`'s --shard-size).",
+)
+@click.option("--seed0", default=0, show_default=True)
+def simgen_run_gpu(prior_path, out_dir, n_sims, gpu_mode, shard_size, seed0) -> None:
+    """Requires a real NVIDIA GPU and the `gpu` extra (`uv sync --extra gpu`) --
+    see planetx.simgen.orchestrate_gpu's module docstring for validation status
+    and gpu_mode's speed/accuracy tradeoff."""
+    from planetx.simgen.orchestrate_gpu import generate_dataset_gpu
+
+    prior_config = PriorConfig.from_yaml(prior_path)
+    generate_dataset_gpu(
+        prior_config=prior_config, out_dir=out_dir, n_simulations=n_sims,
+        gpu_mode=gpu_mode, shard_size=shard_size, seed0=seed0,
+    )
+
+
 # --------------------------------------------------------------- obsdata ---
 @main.group()
 def obsdata() -> None:
