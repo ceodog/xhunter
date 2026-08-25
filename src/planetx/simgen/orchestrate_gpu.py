@@ -27,11 +27,16 @@ Two gpu_mode values:
       footnote). NOT a validated replacement for disk_backend="rebound";
       choose this only if you can accept those caveats for your dataset.
 
-STATUS: written 2026-08-25, NOT yet run against a live GPU by the assistant
-that wrote it (no local GPU available -- see gpu_nbody.py's module
-docstring for the specific validation still needed: run this against a
-real REBOUND worker.run_one on the same sampled theta/nuisance/seed and
-compare hpx_final/tnos directly before trusting it for a real dataset).
+STATUS: validated end-to-end on a Colab A100 (2026-08-25) -- generate_dataset_gpu
+was run for both gpu_mode values at dev scale, the resulting shard parquet files
+were loaded via the real ShardedSimDataset and trained on via the real
+model.train.train() with no changes needed to either. See gpu_nbody.py's module
+docstring for the underlying kernel-vs-REBOUND validation numbers this relies on.
+One real bug was found and fixed in the process (unrelated to this module itself):
+model.train.ShardedSimDataset.__getitem__ raised on any row with exactly one
+detected object (a numpy ragged-array shape-inference ambiguity) -- this affects
+the CPU orchestrate.py path equally, just rarely triggered at production's larger
+disk sizes; fixed in model/train.py.
 """
 
 from __future__ import annotations
