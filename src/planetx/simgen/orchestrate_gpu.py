@@ -42,6 +42,7 @@ disk sizes; fixed in model/train.py.
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 
 import numpy as np
@@ -102,7 +103,7 @@ def generate_dataset_gpu(
     n_simulations: int,
     gpu_mode: str = "full_nbody",
     shard_size: int = 500,
-    seed0: int = 0,
+    seed0: int = -1,
     selection_fn: SelectionFunction | None = None,
 ) -> None:
     """Write shard_00000.parquet, shard_00001.parquet, ... to out_dir --
@@ -111,9 +112,19 @@ def generate_dataset_gpu(
     as the GPU batch size here (one shard = one batch = one set of kernel
     launches), unlike the CPU path where it's purely a checkpoint/write
     granularity independent of worker-process concurrency.
+
+    seed0: same convention as orchestrate.generate_dataset -- pass a
+    non-negative integer for a fully reproducible run, or leave it at the
+    default -1 to derive it from the machine's timestamp (a different
+    dataset each invocation; the resolved value is logged).
     """
     if gpu_mode not in ("full_nbody", "hybrid_secular"):
         raise ValueError(f"Unknown gpu_mode: {gpu_mode!r} (expected 'full_nbody' or 'hybrid_secular')")
+
+    if seed0 < 0:
+        seed0 = time.time_ns()
+        logger.info("seed0 not specified (<0): using timestamp-derived seed0=%d "
+                    "(non-reproducible run -- pass this value back via --seed0 to reproduce it)", seed0)
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

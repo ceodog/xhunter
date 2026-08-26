@@ -81,7 +81,14 @@ def simgen_run(prior_path, out_dir, n_sims, shard_size, workers, seed0, use_tqdm
     help="also the GPU batch size -- one shard is one set of kernel launches, not just a "
          "checkpoint granularity (unlike `run`'s --shard-size).",
 )
-@click.option("--seed0", default=0, show_default=True)
+@click.option(
+    "--seed0", default=-1, show_default=True,
+    help="base seed (sim k uses seed0+k). Negative (default) derives it from the "
+         "machine's current timestamp instead, so repeated runs generate different "
+         "datasets -- the resolved value is logged so a specific run can be reproduced "
+         "later by passing it back explicitly. Pass a non-negative integer for a fully "
+         "reproducible run.",
+)
 def simgen_run_gpu(prior_path, out_dir, n_sims, gpu_mode, shard_size, seed0) -> None:
     """Requires a real NVIDIA GPU and the `gpu` extra (`uv sync --extra gpu`) --
     see planetx.simgen.orchestrate_gpu's module docstring for validation status
