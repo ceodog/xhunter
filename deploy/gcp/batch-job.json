@@ -1,0 +1,58 @@
+{
+  "taskGroups": [
+    {
+      "taskSpec": {
+        "runnables": [
+          {
+            "container": {
+              "imageUri": "REGION-docker.pkg.dev/PROJECT_ID/planetx/simgen:latest",
+              "volumes": [
+                { "source": "/mnt/disks/gcs", "target": "/mnt/disks/gcs" }
+              ]
+            },
+            "environment": {
+              "variables": {
+                "N_SIMS_PER_TASK": "72",
+                "WORKERS": "64",
+                "OUT_DIR": "/mnt/disks/gcs/run1",
+                "PRIOR_PATH": "configs/prior.yaml"
+              }
+            }
+          }
+        ],
+        "volumes": [
+          {
+            "gcs": { "remotePath": "YOUR_BUCKET_NAME/planetx" },
+            "mountPath": "/mnt/disks/gcs"
+          }
+        ],
+        "computeResource": {
+          "cpuMilli": 64000,
+          "memoryMib": 57600
+        },
+        "maxRetryCount": 1,
+        "maxRunDuration": "1296000s"
+      },
+      "taskCount": 7,
+      "parallelism": 7,
+      "taskCountPerNode": 1
+    }
+  ],
+  "allocationPolicy": {
+    "instances": [
+      {
+        "policy": {
+          "machineType": "n1-highcpu-64",
+          "provisioningModel": "STANDARD"
+        }
+      }
+    ]
+  },
+  "labels": {
+    "project": "planetx-hunter",
+    "run": "pilot-500"
+  },
+  "logsPolicy": {
+    "destination": "CLOUD_LOGGING"
+  }
+}
