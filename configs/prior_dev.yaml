@@ -2,9 +2,18 @@
 # priors (those aren't what's expensive), but a drastically shorter
 # integration and smaller test-particle disk, so `planetx simgen run` and
 # the rest of the pipeline can be exercised end to end in minutes instead
-# of days. See README.md, "How long will simulations take" / the
-# per-step cost benchmark: cost/step ~= 1.8us + 0.33us * n_test_particles.
-# At the settings below: ~2e6 steps * ~35us/step =~ 70s per simulation.
+# of days. Per-step cost benchmark for the actual disk_backend="rebound"
+# path (real REBOUND/WHFast, single CPU core -- see worker.py's N_active
+# convention): cost/step ~= 0.77us + 0.196us * n_test_particles, fit from
+# two direct REBOUND timings (n_test=5: 1.75us/step; n_test=500:
+# 98.68us/step; both at dt=0.05yr, 40000 steps, 5 massive bodies) taken
+# during the blockpersim CUDA-port validation session. (A previous version
+# of this comment cited cost/step ~= 1.8us + 0.33us*n_test_particles --
+# that number was from a different, unused prototype benchmark
+# [scripts/bench_test_particle_integrator.py's separate Numba-hybrid
+# kernel], not this project's actual REBOUND-only production path; it
+# overstated real REBOUND's per-step cost by ~1.7-2x.)
+# At the settings below: ~2e6 steps * ~20.4us/step =~ 41s per simulation.
 #
 # NOT scientifically valid on its own -- 1 Myr is far too short to develop
 # the resonant/secular structure the real signal depends on (see
@@ -67,3 +76,4 @@ simulation:
   dt_years: 0.5              # unchanged: still a numerical validity floor, not a speed knob
   use_gr: false
   disk_backend: rebound     # see prior.yaml -- "secular"/"hybrid" exist but are opt-in/exploratory
+  # (only read by `simgen run`; `simgen run-gpu` ignores this -- see prior.yaml's note)

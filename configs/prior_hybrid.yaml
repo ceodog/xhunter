@@ -1,0 +1,66 @@
+# Identical to prior.yaml except disk_backend: hybrid -- kept as a SEPARATE
+# file specifically so prior.yaml's own default never accidentally changes
+# (see its disk_backend comment: "rebound" MUST stay the default there).
+# Opt-in/exploratory only -- see planetx.simgen.secular's module docstring
+# for the measured accuracy caveats before using output from this config
+# for anything beyond a wiring/timing smoke test.
+
+theta_hpx:
+  mass:
+    dist: loguniform
+    low: 1.0     # Earth masses
+    high: 15.0
+  a:
+    dist: uniform
+    low: 250.0   # AU
+    high: 800.0
+  e:
+    dist: uniform
+    low: 0.1
+    high: 0.6
+  i:
+    dist: uniform
+    low: 0.0     # deg
+    high: 40.0
+  Omega:
+    dist: uniform
+    low: 0.0     # deg
+    high: 360.0
+  omega:
+    dist: uniform
+    low: 0.0     # deg
+    high: 360.0
+  M:
+    dist: uniform
+    low: 0.0     # deg -- orbital phase, expect a near-flat posterior
+    high: 360.0
+
+nuisance:
+  disk_inner_edge:
+    dist: uniform
+    low: 30.0    # AU
+    high: 45.0
+  disk_outer_edge:
+    dist: uniform
+    low: 50.0    # AU
+    high: 100.0
+  disk_e_scale:
+    dist: uniform
+    low: 0.01
+    high: 0.15
+  disk_i_scale:
+    dist: uniform
+    low: 1.0     # deg
+    high: 10.0
+
+simulation:
+  n_test_particles: 500
+  integration_years: 4.5e9
+  dt_years: 0.5
+  use_gr: false
+  disk_backend: hybrid
+  # (only read by `simgen run`; `simgen run-gpu` ignores this field entirely --
+  # its own --gpu-mode flag selects the physics there; see prior.yaml's note
+  # and README.md's "GPU-accelerated backends" for the GPU-ported hybrid_secular
+  # mode, which is NOT the same as this CPU "hybrid" backend -- this one routes
+  # resonant particles to real N-body, the GPU one doesn't triage at all)
