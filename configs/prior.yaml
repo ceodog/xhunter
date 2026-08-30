@@ -105,4 +105,10 @@ simulation:
   # including under-representing Omega clustering -- the actual signal this
   # project exists to detect. Do not switch this away from "rebound" for
   # real training-set generation without re-reading secular.py's docstring.
+  #
+  # NOTE: this field is ONLY read by `planetx simgen run` (CPU). The GPU path
+  # (`planetx simgen run-gpu`) ignores it entirely -- that command's own
+  # `--gpu-mode full_nbody|hybrid_secular` flag is what selects the physics
+  # there, independent of whatever this file sets. See README.md,
+  # "GPU-accelerated backends".
   disk_backend: rebound

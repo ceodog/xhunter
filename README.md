@@ -352,6 +352,69 @@ ejected — ~5% of a disk within just 2e7 yr, measured). Do not use either for
 real training-set generation without re-reading `secular.py`'s docstring and
 re-validating at something closer to production timescale first.
 
+### GPU-accelerated backends: `planetx simgen run-gpu`
+
+A separate, GPU-batched (CUDA, via `numba.cuda`) entry point exists alongside
+`simgen run` — `planetx simgen run-gpu`, backed by
+`planetx.simgen.orchestrate_gpu.generate_dataset_gpu`. It fans out many
+simulations into a single GPU kernel launch per shard instead of one CPU
+process per simulation, which is where its speedup comes from — see
+`gpu_nbody.py`/`gpu_secular.py`'s module docstrings for the full derivation
+and validation record this summarizes. **Requires a real NVIDIA GPU** (checked
+via `numba.cuda.is_available()`) and the optional `gpu` dependency group
+(`uv sync --extra gpu`) — not part of the base install, and confirmed to fail
+to build on Intel Mac (no prebuilt `llvmlite` wheel there); it installs and
+runs cleanly on a Linux GPU host (Colab, or a rented cloud GPU).
+
+Selectable via `--gpu-mode`, independently of whatever `simulation.disk_backend`
+the `--prior` config happens to set (`run-gpu` never reads that field — the
+`--gpu-mode` flag is the only thing that controls physics here):
+
+- `--gpu-mode full_nbody` (default) — massive bodies **and** all test
+  particles integrated via real N-body on GPU. Physically equivalent to
+  `disk_backend: rebound`, not an approximation — same physics, same
+  accuracy profile, just GPU-parallelized. Validated end-to-end against a
+  live REBOUND `worker.run_one()` call on identical sampled inputs: `hpx_final`
+  and `tnos` match to the same O(dt²) symplectic-truncation-level differences
+  already documented throughout this project for this from-scratch
+  universal-variable Kepler kernel vs. REBOUND's own WHFast (not
+  roundoff-identical — different integrator implementations — but not a new
+  bug either). Measured ~235 days for 10,000 simulations (500 test particles
+  each) at this project's full production scale (4.5e9 yr, dt=0.5) on an
+  A100 — vs. multiple years on a single CPU core running the same physics
+  serially.
+- `--gpu-mode hybrid_secular` — massive bodies via GPU N-body (needed
+  regardless, since HPX's own final state is the training label), disk via
+  the GPU-ported closed-form secular kernel (`gpu_secular.py`, validated to
+  roundoff against `secular.py`'s own CPU reference). Roughly **14x faster**
+  than `full_nbody` at the same scale (~16.3 days for the same 10,000-sim,
+  4.5e9 yr job) — but it inherits secular.py's *entire* accuracy caveat list
+  above unchanged (validated only to 2e7 yr, fails on resonant particles, no
+  ejection modeling). A faster secular backend is still the same
+  opt-in/exploratory backend, not a validated replacement for `full_nbody` or
+  `disk_backend: rebound`.
+
+`--shard-size` doubles as the GPU batch size for `run-gpu` (unlike `run`,
+where it's purely a checkpoint/write granularity) — each shard is one
+kernel-launch batch, and results are only written to disk once a whole
+shard's launch returns (there is no host-visible signal for partial
+completion within a launch; see `orchestrate_gpu.py`'s module docstring).
+
+One real, unrelated bug was found and fixed while validating this path:
+`model.train.ShardedSimDataset.__getitem__` crashed on any row with exactly
+one detected object (a numpy ragged-array shape-inference ambiguity) — this
+affected the CPU `run` path equally, just rarely triggered at production's
+larger disk sizes. Already fixed in `model/train.py`.
+
+**Status:** validated end-to-end on a Colab A100 (kernel physics, the
+Cartesian-to-orbital-elements conversion, and the full
+`generate_dataset_gpu` → shard parquet → `ShardedSimDataset` →
+`model.train.train()` pipeline for both `--gpu-mode` values) — see
+`gpu_nbody.py`'s module docstring for the exact numbers. Not yet run at
+actual production scale (4.5e9 yr) by anyone, only extrapolated from
+shorter measured runs the same way the CPU-vs-REBOUND numbers elsewhere in
+this README are.
+
 ### Known physical asymmetries and unvalidated assumptions
 
 - **Synthetic vs. real `sigma` come from different physical processes.** On
@@ -521,6 +584,25 @@ disabled for it), and needs `setuptools` present there explicitly (its own
 fails after that, it's worth filing against `reboundx` directly, since the
 rest of this project doesn't depend on it.
 
+**`gpu` is another optional extra**, for `planetx simgen run-gpu` (see
+"GPU-accelerated backends" above) — pulls in `numba` for its CUDA support:
+
+```bash
+uv sync --extra gpu
+```
+
+This only gets you the *package*; actually running `run-gpu` also needs a
+real NVIDIA GPU present at runtime (`numba.cuda.is_available()`). Confirmed
+this extra **fails to build on Intel Mac** specifically: `numba`'s `llvmlite`
+dependency ships prebuilt wheels for macOS arm64 and Linux (manylinux)
+x86_64/aarch64, but not macOS x86_64, so it falls back to a source build
+that errors out there. This isn't a version-resolution conflict (`uv sync
+--extra gpu --dry-run` resolves cleanly) — it's a missing-wheel problem
+specific to that one platform, and irrelevant anywhere the extra is actually
+useful, since a GPU host is a Linux machine in practice (Colab, a rented
+cloud GPU). If you're on Intel Mac, install this extra on whatever Linux GPU
+host you'll actually run `run-gpu` on, not locally.
+
 `rebound` compiles a C extension on install; `torch` is a large download. If
 `uv sync` is slow or fails in a constrained environment, run it
 somewhere with normal network/compiler access — nothing else in this repo
@@ -533,6 +615,12 @@ the public JPL SBDB API).
 # 1. generate a (small, for a first smoke test) training set
 uv run planetx simgen run --prior configs/prior.yaml --out data/train \
     --n-sims 200 --shard-size 50 --workers 4
+
+# 1b. same thing, GPU-accelerated (needs a real NVIDIA GPU + `uv sync --extra gpu` --
+#     see "GPU-accelerated backends" above). --gpu-mode full_nbody is the
+#     no-approximation option; hybrid_secular trades accuracy for more speed.
+uv run planetx simgen run-gpu --prior configs/prior.yaml --out data/train_gpu \
+    --n-sims 200 --gpu-mode full_nbody --shard-size 100
 
 # 2. train the posterior network
 uv run planetx model train --data-dir data/train --out models/posterior_net.pt \
@@ -555,8 +643,10 @@ uv run planetx model infer --checkpoint models/posterior_net.pt \
 planets + HPX + primordial test-particle disk, WHFast integration with
 optional IAS15+`gr_full` general-relativity correction), the Set
 Transformer + normalizing-flow NPE model end to end, JPL SBDB queries
-(verified against a live API call), the sharded-dataset training loop, and
-the CLI wiring all of it together.
+(verified against a live API call), the sharded-dataset training loop, the
+GPU-batched `simgen run-gpu` path (see "GPU-accelerated backends" above —
+requires a real GPU + the optional `gpu` extra, not exercised by default),
+and the CLI wiring all of it together.
 
 **Deliberately stubbed** (each raises `NotImplementedError` with a specific
 TODO, rather than silently faking data):
