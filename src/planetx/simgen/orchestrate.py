@@ -12,6 +12,7 @@ from __future__ import annotations
 import concurrent.futures as cf
 import logging
 import os
+import time
 from pathlib import Path
 
 import numpy as np
@@ -87,7 +88,7 @@ def generate_dataset(
     n_simulations: int,
     shard_size: int = 500,
     n_workers: int = 4,
-    seed0: int = 0,
+    seed0: int = -1,
     selection_fn: SelectionFunction | None = None,
     use_tqdm: bool = False,
 ) -> None:
@@ -96,6 +97,16 @@ def generate_dataset(
     Each row is one (x, theta) training pair: theta (7,), features (N, 11)
     ragged, survey_meta (3,), n_objects. Downstream training reads these
     shards with a streaming loader rather than concatenating them in memory.
+
+    seed0: base seed -- simulation k in [0, n_simulations) uses seed
+        seed0+k. Pass any non-negative integer for a fully reproducible run
+        (two calls with the same prior_config/n_simulations/seed0 produce
+        bit-identical output). seed0<0 (the default, -1) instead derives
+        seed0 from the machine's current timestamp (nanosecond resolution,
+        so back-to-back runs still get distinct seeds), so repeated runs of
+        the same command generate DIFFERENT datasets -- the resolved seed0
+        is logged so a particular "random" run can still be reproduced
+        later by passing it back explicitly.
 
     Progress: each worker process logs its own completions as they happen
     (see _run_and_select) -- genuine per-worker visibility, not just an
@@ -108,6 +119,11 @@ def generate_dataset(
     log file, which is why it's opt-in rather than the default for this
     project's actual cluster-batch use case).
     """
+    if seed0 < 0:
+        seed0 = time.time_ns()
+        logger.info("seed0 not specified (<0): using timestamp-derived seed0=%d "
+                    "(non-reproducible run -- pass this value back via --seed0 to reproduce it)", seed0)
+
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     selection_fn = selection_fn or SimpleSelectionFunction()
